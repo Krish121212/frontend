@@ -1,38 +1,65 @@
 pipeline {
     agent {
-        label 'Agent-1' //config agent in jenkins after creatin server and add the agent name here
+        label 'AGENT-1'
     }
-    options{
-        //how much time does a snapshot need to run? max time? that we will configure here
-        timeout(time: 30, unit: 'MINUTES') //we can give mints, hours, seconds etc.. 
-        disableConcurrentBuilds() //Next build will wait for the previous build to get completed.
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
         ansiColor('xterm')
     }
-    environment {
-        def appVersion = '' //declared variable at env level, this can be used in any stage.
-        nexusUrl = 'nexus.devopskk.online:8081' //nexus runs on port 8081 jenkins on 8080
+    environment{
+        def appVersion = '' //variable declaration
+        nexusUrl = 'nexus.devopskk.online:8081'
+        region = "us-east-1"
+        account_id = "471112721116"
     }
     stages {
-        stage('Read Version') {
-            steps {
-                script{ //grovy script so code need to be in script {}
-                def packageJson = readJSON file: 'package.json'
-                appVersion = packageJson.version
-                echo "application version: $appVersion"
+        stage('read the version'){
+            steps{
+                script{
+                    def packageJson = readJSON file: 'package.json'
+                    appVersion = packageJson.version
+                    echo "application version: $appVersion"
                 }
             }
         }
+        
         stage('Build'){
             steps{
                 sh """
-                    zip -q -r frontend.${appVersion}.zip * -x Jenkinsfile -x frontend.${appVersion}.zip
-                    ls -ltr
+                zip -q -r frontend-${appVersion}.zip * -x Jenkinsfile -x frontend-${appVersion}.zip
+                ls -ltr
                 """
             }
         }
-        stage('Nexus Artifact Upload'){
-            steps{ //while variables using below give "" not ''
-                script{ // in Jenkins for push we need credantials line 52. pull no need. As we are pushing to nexus credantials are mandatory
+
+        stage('Docker build'){
+            steps{
+                sh """
+                    aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${account_id}.dkr.ecr.${region}.amazonaws.com
+
+                    docker build -t ${account_id}.dkr.ecr.${region}.amazonaws.com/expense-frontend:${appVersion} .
+
+                    docker push ${account_id}.dkr.ecr.${region}.amazonaws.com/expense-frontend:${appVersion}
+                """
+            }
+        }
+
+        stage('Deploy'){
+            steps{
+                sh """
+                    aws eks update-kubeconfig --region us-east-1 --name expense-dev
+                    cd helm
+                    sed -i 's/IMAGE_VERSION/${appVersion}/g' values.yaml
+                    helm upgrade frontend .
+                """
+            }
+        }
+
+
+        /* stage('Nexus Artifact Upload'){
+            steps{
+                script{
                     nexusArtifactUploader(
                         nexusVersion: 'nexus3',
                         protocol: 'http',
@@ -51,27 +78,27 @@ pipeline {
                 }
             }
         }
-        stage('Deploy') {
+        stage('Deploy'){
             steps{
                 script{
                     def params = [
-                        string(name: 'appVersion', value: "${appVersion}") //if wait is true this frontend will wait until downstream 'frontend-deploy' is completed
-                    ]   
+                        string(name: 'appVersion', value: "${appVersion}")
+                    ]
                     build job: 'frontend-deploy', parameters: params, wait: false
                 }
             }
-        }    
+        } */
     }
-    post {//we have many posts,below are 3 among them. so posts run after build.used for trigging mails about status etc
+    post { 
         always { 
-            echo 'the steps we write here will always run after any build'
-            deleteDir()    //this deletes the build files after build in directory. otherwise memory waste
+            echo 'I will always say Hello again!'
+            deleteDir()
         }
         success { 
-            echo 'the steps we write here will run after only success build'
+            echo 'I will run when pipeline is success'
         }
         failure { 
-            echo 'the steps we write here will run after only failure build'
+            echo 'I will run when pipeline is failure'
         }
     }
 }
